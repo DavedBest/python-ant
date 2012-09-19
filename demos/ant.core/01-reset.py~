@@ -14,6 +14,10 @@ from config import *
 stick = driver.USB2Driver('test')
 
 
+stick._open()
+
+
+sys.exit()
 
 # Now create an ANT node, and pass it our driver so it can talk to the stick
 antnode = node.Node(stick)

@@ -96,7 +96,7 @@ class Channel(event.EventCallback):
         if self.node.evm.waitForAck(msg) != RESPONSE_NO_ERROR:
             raise ChannelError('Could not set channel frequency.')
 
-    def getNumber(self):
+    def getNumber(self)
         return self.number
 
     def open(self):

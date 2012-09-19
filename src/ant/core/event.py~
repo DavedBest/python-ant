@@ -75,7 +75,7 @@ def ProcessBuffer(buffer_):
                 
             buffer_ = buffer_[next_message_start:]
             #else:
-            #print len(buffer_)
+            print len(buffer_)
             #    break
 
     return (buffer_, messages,)

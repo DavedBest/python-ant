@@ -1,0 +1,62 @@
+from ant.core.event import *
+from ant.core.constants import *
+
+import unittest
+import struct
+import anttestutils
+
+class ProcessBufferTest(unittest.TestCase):
+
+    # length = data +1
+    def get_pack_args(self, data,sync = MESSAGE_TX_SYNC):
+        args = []
+        channel = 0
+        msg_id = MESSAGE_CHANNEL_BROADCAST_DATA
+        length = 4 + len(data) + 1
+        args.append('B'*(length))
+        args.append(sync)
+        # data + chksum
+        args.append(len(data) +1)
+        args.append(msg_id)
+        args.append(channel)
+        args.extend(data)
+
+        args = self.append_checksum(args)
+
+        return args
+
+    def append_checksum(self,args):
+        checksum = 0
+        for i,arg in enumerate(args[1:],start =1):
+            checksum = (checksum ^ arg) # % 0xFF
+        args.append(checksum)
+        print args
+        return args
+                
+         
+    def setUp(self):
+        self.buffer1_data = [2,3,0,0,0,0,0,0,0,4,5]
+        self.buffer2_data = [7,8,0,0,0,0,0,0,0,9,10]
+        self.buffer3_data = [12,13,0,0,0,0,0,0,0,14,15]      
+        
+        self.combind_buffer1 = struct.pack(*self.get_pack_args(self.buffer1_data))
+        self.combind_buffer2 = struct.pack(*self.get_pack_args(self.buffer2_data))
+        self.combind_buffer3 = struct.pack(*self.get_pack_args(self.buffer3_data, sync = MESSAGE_TX_SYNC_LSB ))
+    # tests whether sync byte of next message is sucessfully found
+    def test_combind_buffer(self):
+        buffer_ = self.combind_buffer1 + self.combind_buffer2 + self.combind_buffer3
+        sync, length, type_ = struct.unpack('BBB', buffer_[:3])
+        self.assertEqual(sync, MESSAGE_TX_SYNC )
+        buffer_, messages = ProcessBuffer(buffer_)
+        for i,msg in enumerate(messages):
+            self.assertEqual(msg.getType(),MESSAGE_CHANNEL_BROADCAST_DATA)
+           #if (i ==0 ):
+                #self.assertEqual(msg.getPayload(),self.buffer1_data)    
+
+
+
+
+
+if __name__ == '__main__':
+    unittest.main()     
+        

@@ -681,21 +681,15 @@ class LegacyChannelBurstDataMessage(LegacyChannelMessage):
 #extended data
 
 class ExtendedChannelBroadcastDataMessage(ExtendedChannelMessage):
-    def __init__(self, number=0x00, data='\x00' * 7):
-        ChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_BROADCAST_DATA,
-                                payload=data, number=number)
+    pass
 
 
 class ExtendedChannelAcknowledgedDataMessage(ExtendedChannelMessage):
-    def __init__(self, number=0x00, data='\x00' * 7):
-        ChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_ACKNOWLEDGED_DATA,
-                                payload=data, number=number)
+    pass
 
 
 class ExtendedChannelBurstDataMessage(ExtendedChannelMessage):
-    def __init__(self, number=0x00, data='\x00' * 7):
-        ChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_BURST_DATA,
-                                payload=data, number=number)
+    pass
 
 
 # Channel event messages
