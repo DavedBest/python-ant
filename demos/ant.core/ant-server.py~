@@ -75,6 +75,9 @@ class NodeProxy(object):
     def getDriver(self):
         return self.node.driver
 
+    def send(self,msg):
+        self.node.send(msg)
+
 
 # A run-the-mill event listener
 class HRMListener(event.EventCallback):
@@ -96,7 +99,8 @@ class HRMListener(event.EventCallback):
             #    print ord(msg.payload[i])
 
 # Initialize
-stick = driver.USB2Driver(SERIAL, log=LOG, debug=DEBUG)
+#stick = driver.USB2Driver(SERIAL, log=LOG, debug=DEBUG)
+stick = driver.USB2Driver(SERIAL)
 antnode = node.Node(stick)
 antnode.start()
 

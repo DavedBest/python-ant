@@ -75,6 +75,9 @@ class NodeProxy(object):
     def getDriver(self):
         return self.node.driver
 
+    def send(self,msg):
+        self.node.send(msg)
+
 
 # A run-the-mill event listener
 class HRMListener(event.EventCallback):
@@ -120,6 +123,7 @@ with Pyro4.core.Daemon() as daemon:
         node = NodeProxy(antnode,daemon)
         uri = daemon.register(node)
         ns.register("pyant.server",uri)
+        print 'starting request loop'
     daemon.requestLoop()
 
 

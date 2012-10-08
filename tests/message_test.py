@@ -23,6 +23,7 @@ class ExtendedMessageTest(unittest.TestCase):
         buffer_data = [2,3,4,5,6,7,8,9,0x20,unpacked[0],unpacked[1]] 
         buffer_ = struct.pack(*get_pack_args(buffer_data))
         msg = ExtendedMessage()
+        msg.update()
         msg2 = Message()
         msg2.decode(buffer_)
         msg.decode(buffer_)

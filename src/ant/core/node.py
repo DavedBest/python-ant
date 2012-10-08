@@ -129,6 +129,29 @@ class Channel(event.EventCallback):
             self.cb.append(callback)
         self.cb_lock.release()
 
+    def send(self,msg):
+        if not isinstance(msg,message.ChannelMessage):
+            raise ChannelError('Could not send message (non ChannelMessage)')
+        if isinstance(msg,message.ChannelBurstDataMessage) or isinstance(msg,message.LegacyChannelBurstDataMessage):
+            raise ChannelError('Wrong method for burst data streams (use sendBurst)')
+        # force msg to be sent over this channel
+        msg.setChannelNumber(self.getNumber())    
+        self.node.send(msg)
+
+    def sendBurst(self,msg_list):
+        seq = message.BurstSequence()
+        last_index = len(msg_list) -1
+        for i,msg in enumerate(msg_list):
+            if not isinstance(msg,message.ChannelMessage):
+                raise ChannelError('Could not send message (non ChannelMessage)')
+            if  not isinstance(msg,message.ChannelBurstDataMessage) and not isinstance(msg,message.LegacyChannelBurstDataMessage):
+                raise ChannelError('Methods requires a burst stream (use send)')            
+            channel_no = self.getNumber()
+            if i == last_index:
+                seq.finish()           
+            msg.setChannelNumber(seq.combine(channel_no))
+            self.node.send(msg)        
+
     def process(self, msg):
         self.cb_lock.acquire()
         if isinstance(msg, message.ChannelMessage) and \
@@ -232,6 +255,9 @@ class Node(event.EventCallback):
 
     def registerEventListener(self, callback):
         self.evm.registerCallback(callback)
+
+    def send(self,msg):
+        self.driver.write(msg.encode())
 
     def process(self, msg):
         pass

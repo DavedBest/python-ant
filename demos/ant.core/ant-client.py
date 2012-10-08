@@ -74,6 +74,9 @@ with Pyro4.core.Proxy("PYRONAME:pyant.server") as antnode:
     channel.setSearchTimeout(TIMEOUT_NEVER)
     channel.setPeriod(8070)
     channel.setFrequency(57)
+    msg = message.ChannelEnableExtendedMessage(enable=True)
+    driver = antnode.getDriver()
+    driver.write(msg.encode())  
     channel.open()
     channel.registerCallback(hrm)
     print 'after call'

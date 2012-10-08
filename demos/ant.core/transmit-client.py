@@ -45,7 +45,9 @@ class HRMListener(event.EventCallback):
 #with Pyro4.core.Proxy("PYRONAME:pyant.server") as antnode:
 antnode = Pyro4.core.Proxy("PYRONAME:pyant.server")
 # Setup channel
+print 0
 key = node.NetworkKey('N:ANT+', NETKEY)
+print 0.1
 antnode.setNetworkKey(0, key)
 print 1
 channel = antnode.getFreeChannel()
@@ -61,13 +63,13 @@ channel.open()
 print 4
 atexit.register(exit)
 
-msg = message.ChannelLibConfigMessage(enable=False)
-driver = antnode.getDriver()
-driver.write(msg.encode())
+#msg = message.ChannelLibConfigMessage(enable=True)
+#driver = antnode.getDriver()
+#driver.write(msg.encode())
 
-msg = message.ChannelEnableExtendedMessage(enable=False)
-driver = antnode.getDriver()
-driver.write(msg.encode())  
+#msg = message.ChannelEnableExtendedMessage(enable=False)
+#driver = antnode.getDriver()
+#driver.write(msg.encode())  
 
 # Setup callback
 # Note: We could also register an event listener for non-channel events by

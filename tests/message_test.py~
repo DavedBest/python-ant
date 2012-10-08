@@ -26,6 +26,7 @@ class ExtendedMessageTest(unittest.TestCase):
         msg2 = Message()
         msg2.decode(buffer_)
         msg.decode(buffer_)
+        msg.update()
         self.assertEqual(msg.payload,msg2.payload)
         sync = msg.getSync()
         self.assertEqual(sync, MESSAGE_TX_SYNC )
@@ -83,6 +84,7 @@ class LegacyMessageTest(unittest.TestCase):
         msg = LegacyChannelBroadcastDataMessage()
         pack = struct.pack('B'* 8, 1,2,3,4,5,6,7,8)
         msg.setRawData(pack)
+        print "====================="
         print struct.unpack('B'*8,msg.getRawData())
          
 

@@ -43,7 +43,7 @@ class HRMListener(event.EventCallback):
 #antnode.start()
 
 #with Pyro4.core.Proxy("PYRONAME:pyant.server") as antnode:
-antnode = Pyro4.core.Proxy("PYRONAME:pyant.server")
+antnode = Pyro4.core.Proxy("PYRONAME:pyant.server2")
 # Setup channel
 key = node.NetworkKey('N:ANT+', NETKEY)
 antnode.setNetworkKey(0, key)
@@ -76,13 +76,13 @@ hr_seq = 0
 
 try:
 
-    msg = message.ChannelLibConfigMessage(enable=False)
-    driver = antnode.getDriver()
-    driver.write(msg.encode())
+    #msg = message.ChannelLibConfigMessage(enable=False)
+    #driver = antnode.getDriver()
+    #driver.write(msg.encode())
 
-    msg = message.ChannelEnableExtendedMessage(enable=False)
-    driver = antnode.getDriver()
-    driver.write(msg.encode())       
+    #msg = message.ChannelEnableExtendedMessage(enable=False)
+    #driver = antnode.getDriver()
+    #driver.write(msg.encode())       
 
     while True:
         msg = message.LegacyChannelBroadcastDataMessage()
@@ -104,13 +104,23 @@ try:
         #test[-1] = chr(hr)
         #test[-2] = chr(hr_seq)
         #test[0] = chr(channel.number)
-        pack = struct.pack('B' * 13,channel.getNumber(),1,2,3,4,5,6,7,8,9,10,hr_seq,hr)
+        device_number = 0x1234
+        packed = struct.pack('<H', device_number)
+        number = struct.unpack('BB',packed)
+        device_type = 0x78
+        transmission_type = 7
+        pack = struct.pack('B' * 13,channel.getNumber(),number[0],number[1],device_type,transmission_type,5,6,7,8,9,10,hr_seq,hr)
         payload = pack
         msg.setPayload(payload)
+        msg.setTransmissionType(7)
+        print msg.getTransmissionType()
+        msg.setDeviceNumber(1234)
+        print msg.getDeviceNumber()
         #print msg.getDeviceType()
         #print 'Heart Rate:', ord(msg.payload[-1])
-        driver = antnode.getDriver()
-        driver.write(msg.encode()) 
+        channel.send(msg)
+        #driver = antnode.getDriver()
+        #driver.write(msg.encode()) 
         time.sleep(0.1)
 
 except Exception, e:

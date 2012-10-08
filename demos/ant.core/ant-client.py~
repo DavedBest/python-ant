@@ -32,7 +32,7 @@ def exit():
 # A run-the-mill event listener
 class HRMListener(event.EventCallback):
     def process(self, msg):
-        print msg
+        #print msg
         if isinstance(msg, message.ChannelBroadcastDataMessage):
             print 'Heart Rate:', ord(msg.payload[8])
             #msg = message.ChannelRequestMessage(message_id=MESSAGE_CHANNEL_ID)
@@ -74,6 +74,9 @@ with Pyro4.core.Proxy("PYRONAME:pyant.server") as antnode:
     channel.setSearchTimeout(TIMEOUT_NEVER)
     channel.setPeriod(8070)
     channel.setFrequency(57)
+    msg = message.ChannelEnableExtendedMessage(enable=True)
+    driver = antnode.getDriver()
+    driver.write(msg.encode())  
     channel.open()
     channel.registerCallback(hrm)
     print 'after call'

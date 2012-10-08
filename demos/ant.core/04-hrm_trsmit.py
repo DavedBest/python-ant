@@ -56,13 +56,13 @@ hr = 50
 hr_change = 2
 hr_seq = 0
 
-msg = message.ChannelLibConfigMessage(enable=False)
-driver = antnode.getDriver()
-driver.write(msg.encode())
+#msg = message.ChannelLibConfigMessage(enable=False)
+#driver = antnode.getDriver()
+#driver.write(msg.encode())
 
-msg = message.ChannelEnableExtendedMessage(enable=False)
-driver = antnode.getDriver()
-driver.write(msg.encode())  
+#msg = message.ChannelEnableExtendedMessage(enable=False)
+#driver = antnode.getDriver()
+#driver.write(msg.encode())  
 
 try:
     while True:
