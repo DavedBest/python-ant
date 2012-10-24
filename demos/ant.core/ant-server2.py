@@ -72,11 +72,9 @@ class NodeProxy(object):
     def process(self, msg):
         self.node.process(msg)
 
-    def getDriver(self):
-        return self.node.driver
-
     def send(self,msg):
         self.node.send(msg)
+    
 
 
 # A run-the-mill event listener
@@ -100,7 +98,7 @@ class HRMListener(event.EventCallback):
 
 # Initialize
 #stick = driver.USB2Driver(SERIAL, log=LOG, debug=DEBUG)
-stick = driver.USB2Driver(SERIAL)
+stick = driver.USB2Driver(SERIAL + '2',number=1)
 antnode = node.Node(stick)
 antnode.start()
 
@@ -122,7 +120,7 @@ with Pyro4.core.Daemon() as daemon:
     with Pyro4.naming.locateNS() as ns:
         node = NodeProxy(antnode,daemon)
         uri = daemon.register(node)
-        ns.register("pyant.server",uri)
+        ns.register("pyant.server2",uri)
     daemon.requestLoop()
 
 

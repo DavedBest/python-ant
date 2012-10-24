@@ -32,11 +32,13 @@ def exit():
 # A run-the-mill event listener
 class HRMListener(event.EventCallback):
     def process(self, msg):
+        #print len(msg.getPayload())
+        #print msg
         if isinstance(msg, message.ChannelBroadcastDataMessage):
             print 'Heart Rate:', ord(msg.payload[8])
-            msg = message.ChannelRequestMessage(message_id=MESSAGE_CHANNEL_ID)
+            #msg = message.ChannelRequestMessage(message_id=MESSAGE_CHANNEL_ID)
 
-            channel.node.driver.write(msg.encode()) 
+            #channel.node.driver.write(msg.encode()) 
             #try:
             #    print len(msg.payload)
             #    print type(msg.payload)
@@ -47,6 +49,13 @@ class HRMListener(event.EventCallback):
             #print 'hi'
             #for i in range(0,8):
             #    print ord(msg.payload[i])
+        if isinstance(msg, message.ExtendedMessage):
+            print 'Extended'
+            print msg.getDeviceType()
+        if isinstance(msg, message.LegacyMessage):
+            print 'Legacy'
+            print msg.getDeviceType()
+        print 'done'
 
 # Initialize
 #stick = driver.USB2Driver(SERIAL, log=LOG, debug=DEBUG)
@@ -60,26 +69,31 @@ daemon = Pyro4.core.Daemon()
 hrm = HRMListener()
 daemon.register(hrm)
 
-with Pyro4.core.Proxy("PYRONAME:pyant.server") as antnode:
-    
-    channel = antnode.getChannels()[0]
+with Pyro4.core.Proxy("PYRONAME:pyant.server2") as antnode:
+    #print type(antnode.getChannels())
     # Setup channel
-    #key = node.NetworkKey('N:ANT+', NETKEY)
+    key = node.NetworkKey('N:ANT+', NETKEY)
     #daemon.register(key)
-    #antnode.setNetworkKey(0, key)
-    #channel = antnode.getFreeChannel()
-    #channel.name = 'C:HRM'
-    #channel.assign('N:ANT+', CHANNEL_TYPE_TWOWAY_RECEIVE)
-   #channel.setID(120, 0, 0)
-    #channel.setSearchTimeout(TIMEOUT_NEVER)
-    #channel.setPeriod(8070)
-    #channel.setFrequency(57)
-    #channel.open()
-    #print 'before callback'
+    antnode.setNetworkKey(0, key)
+    channel = antnode.getFreeChannel()
+    channel.name = 'C:HRM'
+    channel.assign('N:ANT+', CHANNEL_TYPE_TWOWAY_RECEIVE)
+    channel.setID(120, 0, 0)
+    channel.setSearchTimeout(TIMEOUT_NEVER)
+    channel.setPeriod(8070)
+    channel.setFrequency(57)
+    #msg = message.ChannelEnableExtendedMessage(enable=True)
+    #driver = antnode.getDriver()
+    #driver.write(msg.encode())
+    msg = message.ChannelLibConfigMessage()
+    driver = antnode.getDriver()
+    driver.write(msg.encode())
+    channel.open()
     channel.registerCallback(hrm)
-    #print 'after call'
+    print 'after call'
+  
 
-daemon.requestLoop()
+    daemon.requestLoop()
 
 
 # Setup callback

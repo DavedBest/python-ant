@@ -43,7 +43,7 @@ class HRMListener(event.EventCallback):
 #antnode.start()
 
 #with Pyro4.core.Proxy("PYRONAME:pyant.server") as antnode:
-antnode = Pyro4.core.Proxy("PYRONAME:pyant.server2")
+antnode = Pyro4.core.Proxy("PYRONAME:pyant.server")
 # Setup channel
 key = node.NetworkKey('N:ANT+', NETKEY)
 antnode.setNetworkKey(0, key)
@@ -56,10 +56,23 @@ channel.setID(0x78,0x1234, 1)
 channel.setSearchTimeout(50)
 channel.setPeriod(8070)
 channel.setFrequency(57)
+
+msg = message.ChannelLibConfigMessage()
+driver = antnode.getDriver()
+driver.write(msg.encode())
+
+msg = message.ChannelEnableExtendedMessage(enable=True)
+driver = antnode.getDriver()
+driver.write(msg.encode())  
+
 print 3
 channel.open()
 print 4
 atexit.register(exit)
+
+
+
+
 
 # Setup callback
 # Note: We could also register an event listener for non-channel events by
@@ -74,18 +87,62 @@ hr = 50
 hr_change = 2
 hr_seq = 0
 
+# length = data +1
+def get_pack_args(data,sync = MESSAGE_TX_SYNC):
+    args = []
+    channel = 0
+    msg_id = MESSAGE_CHANNEL_BROADCAST_DATA
+    length = 4 + len(data) + 1
+    args.append('B'*(length))
+    args.append(sync)
+    # data + chksum
+    args.append(len(data) +1)
+    args.append(msg_id)
+    args.append(channel)
+    args.extend(data)
+
+    args = append_checksum(args)
+
+    return args
+
+def append_checksum(args):
+    checksum = 0
+    for i,arg in enumerate(args[1:],start =1):
+        checksum = ((checksum ^ arg))  % 0xFF
+    args.append(checksum)
+    print args
+    return args
+                
+
+timestamp = 1234
+packed = struct.pack('<H', timestamp)
+timestamp_bytes = struct.unpack('BB',packed)
+
+device_number = 4567
+packed = struct.pack('<H', device_number)
+number = struct.unpack('BB',packed)
+
+device_type = 18
+transmission_type = 28
+
+rssi_type = 71
+rssi_value = 167
+rssi_threshold = 179
+
+
+buffer_data = [2,3,4,5,6,7,8,9,0xE0,number[0],number[1],device_type,transmission_type,rssi_type,rssi_value,rssi_threshold,timestamp_bytes[0],timestamp_bytes[1]]
+buffer_ = struct.pack(*get_pack_args(buffer_data))
+
+buffer_ = struct.pack(*get_pack_args(buffer_data))
+msg = message.Message()
+msg.decode(buffer_)
+
 try:
-
-    #msg = message.ChannelLibConfigMessage(enable=False)
-    #driver = antnode.getDriver()
-    #driver.write(msg.encode())
-
-    #msg = message.ChannelEnableExtendedMessage(enable=False)
-    #driver = antnode.getDriver()
-    #driver.write(msg.encode())       
-
     while True:
-        msg = message.LegacyChannelBroadcastDataMessage()
+        msg = message.ChannelBroadcastDataMessage()
+        msg.setChannelNumber(channel.getNumber())
+        msg.setType(MESSAGE_CHANNEL_EXTENDED_BROADCAST_DATA)
+        
         payload = msg.getPayload()
         hr_seq = hr_seq + 1;
         if (hr_seq >= 256):
@@ -104,24 +161,14 @@ try:
         #test[-1] = chr(hr)
         #test[-2] = chr(hr_seq)
         #test[0] = chr(channel.number)
-        device_number = 0x1234
-        packed = struct.pack('<H', device_number)
-        number = struct.unpack('BB',packed)
-        device_type = 0x78
-        transmission_type = 7
-        pack = struct.pack('B' * 13,channel.getNumber(),number[0],number[1],device_type,transmission_type,5,6,7,8,9,10,hr_seq,hr)
+        pack = struct.pack('B' * 8,1,2,3,4,5,6,hr_seq,hr)
         payload = pack
-        msg.setPayload(payload)
-        msg.setTransmissionType(7)
-        print msg.getTransmissionType()
-        msg.setDeviceNumber(1234)
-        print msg.getDeviceNumber()
-        #print msg.getDeviceType()
+        msg.setRawData(payload)
+        print len(msg.getPayload())
         #print 'Heart Rate:', ord(msg.payload[-1])
         driver = antnode.getDriver()
         driver.write(msg.encode()) 
         time.sleep(0.1)
-
 except Exception, e:
     print e
     tb = traceback.format_exc()

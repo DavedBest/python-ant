@@ -43,7 +43,7 @@ class HRMListener(event.EventCallback):
 #antnode.start()
 
 #with Pyro4.core.Proxy("PYRONAME:pyant.server") as antnode:
-antnode = Pyro4.core.Proxy("PYRONAME:pyant.server")
+antnode = Pyro4.core.Proxy("PYRONAME:pyant.server2")
 # Setup channel
 print 0
 key = node.NetworkKey('N:ANT+', NETKEY)
@@ -80,7 +80,7 @@ atexit.register(exit)
 #print "Listening for HR monitor events (120 seconds)..."
 #time.sleep(120)
 
-hr = 50
+hr = 0xbe
 hr_change = 2
 hr_seq = 0
 
@@ -91,9 +91,10 @@ try:
         hr_seq = hr_seq + 1;
         if (hr_seq >= 256):
             hr_seq = 0    
-        hr = hr + hr_change
-        if hr > 200 or hr < 40:
-            hr_change = -hr_change
+        #hr = hr + hr_change
+        #if hr > 200 or hr < 40:
+        #    hr_change = -hr_change
+        hr = hr ^ 0xAA
         #print type(payload)
         #print ord(payload[0])
         #bytes = bytearray(payload)
@@ -109,8 +110,9 @@ try:
         payload = pack
         msg.setPayload(payload)
         #print 'Heart Rate:', ord(msg.payload[-1])
-        driver = antnode.getDriver()
-        driver.write(msg.encode()) 
+        #driver = antnode.getDriver()
+        #driver.write(msg.encode()) 
+        channel.send(msg)
         time.sleep(0.1)
 except Exception, e:
     print e

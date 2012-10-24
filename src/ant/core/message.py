@@ -660,6 +660,10 @@ class ChannelOpenMessage(ChannelMessage):
         ChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_OPEN,
                                 number=number)
 
+class ChannelOpenRxScanMessage(ChannelMessage):
+    def __init__(self, number=0x00):
+        ChannelMessage.__init__(self, type_=MESSAGE_OPEN_RX_SCAN,
+                                number=number)
 
 class ChannelCloseMessage(ChannelMessage):
     def __init__(self, number=0x00):
