@@ -27,24 +27,47 @@ import struct
 
 from ant.core.exceptions import MessageError
 from ant.core.constants import *
+ 
+def convertBytes(bytes):
+    if len(bytes) == 1:
+        return ord(bytes[0])
+    elif len(bytes) == 2:
+        data_string = ''.join(bytes)
+        return struct.unpack('<H', data_string)[0]
+    else: 
+        raise ValueError('Unsupported number of bytes')
 
 
 class Message(object):
-    def __init__(self, type_=0x00, payload=''):
+    def __init__(self, type_=0x00, payload='',sync= MESSAGE_TX_SYNC):
         self.setType(type_)
         self.setPayload(payload)
+        self.setSync(sync)
 
     def getPayload(self):
         return ''.join(self.payload)
 
+    def getPayloadAsList(self):
+        return self.payload
+
     def setPayload(self, payload):
         if len(payload) > 9:
-            raise MessageError(
-                  'Could not set payload (payload too long).')
+            #raise MessageError(
+            #      'Could not set payload (payload too long).')
+            pass
 
         self.payload = []
         for byte in payload:
             self.payload += byte
+
+    def getRawData(self):
+        payload = self.getPayload()[1:9]
+        return payload
+
+    def setRawData(self,raw):
+        payload = self.getPayloadAsList()
+        payload[1:9] = raw
+        self.setPayload(payload)
 
     def getType(self):
         return self.type_
@@ -55,23 +78,32 @@ class Message(object):
 
         self.type_ = type_
 
+    def getSync(self):
+        return self.sync
+
+    def setSync(self, sync):
+        if sync != MESSAGE_TX_SYNC and sync != MESSAGE_TX_SYNC_LSB:
+            raise MessageError('Could not set sync (Unknown value).')
+        self.sync = sync    
+
     def getChecksum(self):
         data = chr(len(self.getPayload()))
         data += chr(self.getType())
         data += self.getPayload()
 
-        checksum = MESSAGE_TX_SYNC
+        checksum = self.getSync()
         for byte in data:
             checksum = (checksum ^ ord(byte)) % 0xFF
 
         return checksum
+
 
     def getSize(self):
         return len(self.getPayload()) + 4
 
     def encode(self):
         raw = struct.pack('BBB',
-                          MESSAGE_TX_SYNC,
+                          self.getSync(),
                           len(self.getPayload()),
                           self.getType())
         raw += self.getPayload()
@@ -85,21 +117,55 @@ class Message(object):
 
         sync, length, type_ = struct.unpack('BBB', raw[:3])
 
-        if sync != MESSAGE_TX_SYNC:
+        if sync != MESSAGE_TX_SYNC and sync != MESSAGE_TX_SYNC_LSB:
             raise MessageError('Could not decode (expected TX sync).')
         if length > 9:
-            raise MessageError('Could not decode (payload too long).')
+            #raise MessageError('Could not decode (payload too long).')
+            #print length
+            pass
         if len(raw) < (length + 4):
             raise MessageError('Could not decode (message is incomplete).')
 
         self.setType(type_)
         self.setPayload(raw[3:length + 3])
+        self.setSync(sync)
 
         if self.getChecksum() != ord(raw[length + 3]):
             raise MessageError('Could not decode (bad checksum).',
                                internal='CHECKSUM')
 
         return self.getSize()
+
+    def _getBurstMsg(self):
+        format = self.getFormat()
+        if format == MessageFormat.EXTENDED:
+            msg = ExtendedChannelBurstDataMessage()
+        else:
+            msg = ChannelBurstDataMessage() 
+        return msg
+
+    def _getBroadcastMessage(self):
+        format = self.getFormat()
+        if format == MessageFormat.EXTENDED:
+            msg = ExtendedChannelBroadcastDataMessage()
+        else:
+            msg = ChannelBroadcastDataMessage()
+        return msg
+
+    def _getAckDataMessage(self):
+        format = self.getFormat()
+        if format == MessageFormat.EXTENDED:
+            msg = ExtendedChannelAcknowledgedDataMessage()
+        else:
+            msg = ChannelAcknowledgedDataMessage() 
+        return msg           
+
+    def getFormat(self):
+        length = len(self.getPayloadAsList())
+        format = MessageFormat.LEGACY
+        if length > MESSAGE_LENGTH_LEGACY:
+            format = MessageFormat.EXTENDED
+        return format
 
     def getHandler(self, raw=None):
         if raw:
@@ -133,11 +199,17 @@ class Message(object):
         elif self.type_ == MESSAGE_CHANNEL_REQUEST:
             msg = ChannelRequestMessage()
         elif self.type_ == MESSAGE_CHANNEL_BROADCAST_DATA:
-            msg = ChannelBroadcastDataMessage()
+            msg = self._getBroadcastMessage()
         elif self.type_ == MESSAGE_CHANNEL_ACKNOWLEDGED_DATA:
-            msg = ChannelAcknowledgedDataMessage()
+            msg = self._getAckDataMessage()
         elif self.type_ == MESSAGE_CHANNEL_BURST_DATA:
-            msg = ChannelBurstDataMessage()
+            msg = self._getBurstMsg()
+        elif self.type_ == MESSAGE_CHANNEL_EXTENDED_BROADCAST_DATA:
+            msg = LegacyChannelBroadcastDataMessage()
+        elif self.type_ == MESSAGE_CHANNEL_EXTENDED_ACKNOWLEDGED_DATA:
+            msg = LegacyChannelAcknowledgedDataMessage()
+        elif self.type_ == MESSAGE_CHANNEL_EXTENDED_BURST_DATA:
+            msg = LegacyChannelBurstDataMessage()
         elif self.type_ == MESSAGE_CHANNEL_EVENT:
             msg = ChannelEventMessage()
         elif self.type_ == MESSAGE_CHANNEL_STATUS:
@@ -148,13 +220,252 @@ class Message(object):
             msg = CapabilitiesMessage()
         elif self.type_ == MESSAGE_SERIAL_NUMBER:
             msg = SerialNumberMessage()
+        elif self.type_ == MESSAGE_STARTUP:
+            msg = StartupMessage()
         else:
             raise MessageError('Could not find message handler ' \
-                               '(unknown message type).')
+                               '(unknown message type).', internal = 'UNKNOWN_MESSAGE_TYPE')
 
         msg.setPayload(self.getPayload())
         return msg
 
+
+class IncompleteReadException(Exception):
+    pass
+
+class TrackedBuffer(object):
+    def __init__(self, payload):
+        self.payload = payload
+        self.index = 0
+
+    def read(self, length):
+        if self.index + length > len(self.payload):
+            raise IncompleteReadException("Too few bytes for requested read")
+        rtn = self.payload[self.index:self.index+length]
+        self.index += length
+        return rtn
+
+class ChannelData(object):
+    def __init__(self,device_number=None, device_type=None, transmission_type=None):
+        self.device_number = device_number
+        self.device_type = device_type
+        self.transmission_type = transmission_type
+
+    def getDeviceNumber(self):
+        return self.device_number
+
+    def setDeviceNumber(self, device_number):
+        self.device_number = device_number
+
+    def getDeviceType(self):
+        return self.device_type
+
+    def setDeviceType(self, device_type):
+        self.device_type = device_type
+
+    def getTransmissionType(self):
+        return self.transmission_type
+
+    def setTransmissionType(self, trans_type):
+        self.transmission_type = trans_type   
+
+class ExtendedMessage(Message,ChannelData):
+    def __init__(self, type_=0x00, payload='\x00'*11,sync= MESSAGE_TX_SYNC):
+        Message.__init__(self,type_=type_,payload=payload,sync=sync)
+        self.flag = None    
+        self.rssi_type = None;
+        self.rssi_value = None;
+        self.rssi_threshold = None;
+        self.timestamp = None;
+
+    def setPayload(self, payload):
+        Message.setPayload(self,payload)
+        self.update()
+
+    def update(self):
+        payload = self.getPayloadAsList()
+        
+        if len(payload) < 10:
+            raise MessageError('Too few bytes for an extended message (too few bytes)')
+
+        flag = convertBytes(payload[9:10])
+        self.setFlag(flag)
+
+        # start at first byte of extended data
+        extended_data = TrackedBuffer(payload[10:])
+        if flag & ExtendedMessageFlags.ENABLE_CHANNEL_ID == ExtendedMessageFlags.ENABLE_CHANNEL_ID:
+            # piggy back ChannelIDMessage
+            #id_message = ChannelIDMessage()
+
+            #dummy_payload = []
+            #payload = self.getPayloadAsList()
+            
+            #include channel id
+            #dummy_payload.extend(payload[:ElementSize.CHANNEL_ID])
+
+            # include actual data 
+            #length =  ElementSize.DEVICE_NUMBER + ElementSize.DEVICE_TYPE + ElementSize.TRANSMISSION_TYPE
+            #dummy_payload.extend(extended_data.read(length))
+
+            #id_message.setPayload(dummy_payload)
+            
+            device_number = convertBytes(extended_data.read(ElementSize.DEVICE_NUMBER))
+            self.setDeviceNumber(device_number)
+
+            device_type = convertBytes(extended_data.read(ElementSize.DEVICE_TYPE))
+            self.setDeviceType(device_type)
+            
+            transmission_type = convertBytes(extended_data.read(ElementSize.TRANSMISSION_TYPE))
+            self.setTransmissionType(transmission_type)
+
+        if flag & ExtendedMessageFlags.ENABLE_RSSI_OUTPUT == ExtendedMessageFlags.ENABLE_RSSI_OUTPUT:
+            rssi_type = convertBytes(extended_data.read(ElementSize.RSSI_MEASUREMENT_TYPE))
+            self.setRssiType(rssi_type)
+
+            rssi_value = convertBytes(extended_data.read(ElementSize.RSSI_VALUE))
+            self.setRssiValue(rssi_value)
+
+            rssi_threshold = convertBytes(extended_data.read(ElementSize.RSSI_THRESHOLD_CONFIG))
+            self.setRssiThreshold(rssi_threshold)
+
+        if flag & ExtendedMessageFlags.ENABLE_RX_TIMESTAMP == ExtendedMessageFlags.ENABLE_RX_TIMESTAMP:
+            timestamp = convertBytes(extended_data.read(ElementSize.RX_TIMESTAMP))
+            self.setTimestamp(timestamp)
+
+    
+    def decode(self,raw):
+        size = Message.decode(self,raw)
+        
+        self.update()
+
+        return size
+
+    def encode(self):
+        payload = self.getPayload()[0:9]
+        msg = Message(type_=self.getType(),payload=payload,sync=self.getSync())
+        raw = msg.encode()
+        return raw                                                                    
+
+    def getTimestamp(self):
+        return self.timestamp
+
+    def setTimestamp(self,timestamp):
+        self.timestamp = timestamp
+
+    def getRssiType(self):
+        return self.rssi_type
+
+    def setRssiType(self, rssi_type):
+        self.rssi_type = rssi_type
+
+    def getRssiValue(self):
+        return self.rssi_value
+
+    def setRssiValue(self, rssi_value):
+        self.rssi_value = rssi_value               
+
+    def getRssiThreshold(self):
+        return self.rssi_threshold
+
+    def setRssiThreshold(self, rssi_threshold):
+        self.rssi_threshold = rssi_threshold  
+                                   
+    def setFlag(self, flag):
+        self.flag = flag
+
+    def getFlag(self):
+        return self.flag    
+    
+    
+
+class LegacyExtendedMessage(Message, ChannelData):
+    def __init__(self, type_=0x00, payload='\x00'*13,sync= MESSAGE_TX_SYNC):
+        Message.__init__(self,type_=type_,payload=payload,sync=sync)
+        self.device_number = 0x00
+        self.device_type = 0x00
+        self.transmission_type = 0x00
+
+
+    def setPayload(self, payload, update=True):
+        Message.setPayload(self,payload)
+        if update:
+            self.update()
+
+    def update(self):
+        payload = self.getPayloadAsList()
+               
+        extended_data = TrackedBuffer(payload[1:5])
+    
+        device_number = convertBytes(extended_data.read(ElementSize.DEVICE_NUMBER))
+        self.setDeviceNumber(device_number)
+
+        device_type = convertBytes(extended_data.read(ElementSize.DEVICE_TYPE))
+        self.setDeviceType(device_type)
+        
+        transmission_type = convertBytes(extended_data.read(ElementSize.TRANSMISSION_TYPE))
+        self.setTransmissionType(transmission_type)
+
+
+    def decode(self,raw):
+        size = Message.decode(self,raw)
+        self.update()
+
+        return size
+
+    def encode(self):
+        payload = self.getPayload()
+        if len(payload) != 13:
+            raise MessageError('Length of payload doesn\'t match expected value')
+
+        #payload[1:3] = struct.pack('<H', self.getDeviceNumber())
+        #payload[4] = chr(self.getDeviceType())
+        #payload[5] = chr(self.getTransmissionType())
+        
+        raw = struct.pack('BBB',
+                          self.getSync(),
+                          len(payload),
+                          self.getType())
+        raw += payload
+        raw += chr(self.getChecksum())
+
+        return raw
+
+    def setDeviceNumber(self, device_number):
+        payload = self.getPayloadAsList()
+        payload[1:3] = struct.pack('<H', device_number)
+        self.setPayload(payload,update=False)
+        
+    def setDeviceType(self, device_type):
+        payload = self.getPayloadAsList()
+        payload[3] = chr(device_type)
+        self.setPayload(payload,update=False)
+
+    def setTransmissionType(self, trans_type):
+        payload = self.getPayloadAsList()
+        payload[4] = chr(trans_type)
+        self.setPayload(payload,update=False)
+
+    def getDeviceNumber(self):
+        payload = self.getPayloadAsList()
+        return convertBytes(payload[1:3])
+        
+    def getDeviceType(self):
+        payload = self.getPayloadAsList()
+        return convertBytes(payload[3])
+
+    def getTransmissionType(self):
+        payload = self.getPayloadAsList()
+        return convertBytes(payload[4])
+
+    def getRawData(self):
+        payload = self.getPayload()[5:]
+        return payload
+
+    def setRawData(self,raw):
+        payload = self.getPayloadAsList()
+        payload[5:] = raw
+        self.setPayload(payload)
+                    
 
 class ChannelMessage(Message):
     def __init__(self, type_, payload='', number=0x00):
@@ -162,17 +473,47 @@ class ChannelMessage(Message):
         self.setChannelNumber(number)
 
     def getChannelNumber(self):
-        return ord(self.payload[0])
+        payload = self.getPayloadAsList()
+        return ord(payload[0])
 
     def setChannelNumber(self, number):
         if (number > 0xFF) or (number < 0x00):
             raise MessageError('Could not set channel number ' \
                                    '(out of range).')
+        payload = self.getPayloadAsList()
+        payload[0] = chr(number)
+        self.setPayload(payload)
 
-        self.payload[0] = chr(number)
+class LegacyChannelMessage(ChannelMessage, LegacyExtendedMessage):
+    pass
+
+class ExtendedChannelMessage(ChannelMessage, ExtendedMessage):
+    pass
 
 
 # Config messages
+
+class ChannelLibConfigMessage(Message):
+    def __init__(self, type_=MESSAGE_LIB_CONFIG, mask=ExtendedMessageFlags.ENABLE_RX_TIMESTAMP | ExtendedMessageFlags.ENABLE_CHANNEL_ID):
+        #usb2 stick doesn't support rssi | ExtendedMessageFlags.ENABLE_RSSI_OUTPUT 
+        # filler byte required
+        payload = struct.pack('BB',0,mask)
+
+        Message.__init__(self, type_, payload)
+        
+
+class ChannelEnableExtendedMessage(Message):
+    def __init__(self, type_=MESSAGE_ENABLE_EXTENDED_MESSAGES, enable=True):
+
+        enable_flag = 1
+        if not enable:
+            enable_flag = 0
+        
+        payload = struct.pack('BB',0,enable_flag)
+
+        Message.__init__(self, type_, payload)
+
+
 class ChannelUnassignMessage(ChannelMessage):
     def __init__(self, number=0x00):
         ChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_UNASSIGN,
@@ -319,6 +660,10 @@ class ChannelOpenMessage(ChannelMessage):
         ChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_OPEN,
                                 number=number)
 
+class ChannelOpenRxScanMessage(ChannelMessage):
+    def __init__(self, number=0x00):
+        ChannelMessage.__init__(self, type_=MESSAGE_OPEN_RX_SCAN,
+                                number=number)
 
 class ChannelCloseMessage(ChannelMessage):
     def __init__(self, number=0x00):
@@ -349,20 +694,56 @@ class RequestMessage(ChannelRequestMessage):
 
 # Data messages
 class ChannelBroadcastDataMessage(ChannelMessage):
-    def __init__(self, number=0x00, data='\x00' * 7):
+    def __init__(self, number=0x00, data='\x00' * 8):
         ChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_BROADCAST_DATA,
                                 payload=data, number=number)
 
 
 class ChannelAcknowledgedDataMessage(ChannelMessage):
-    def __init__(self, number=0x00, data='\x00' * 7):
+    def __init__(self, number=0x00, data='\x00' * 8):
         ChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_ACKNOWLEDGED_DATA,
                                 payload=data, number=number)
 
 
 class ChannelBurstDataMessage(ChannelMessage):
-    def __init__(self, number=0x00, data='\x00' * 7):
+    def __init__(self, number=0x00, data='\x00' * 8):
         ChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_BURST_DATA,
+                                payload=data, number=number)
+
+#legacy extended data
+
+class LegacyChannelBroadcastDataMessage(LegacyChannelMessage):
+    def __init__(self, number=0x00, data='\x00' * 12):
+        LegacyChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_EXTENDED_BROADCAST_DATA,
+                                payload=data, number=number)
+
+class LegacyChannelAcknowledgedDataMessage(LegacyChannelMessage):
+    def __init__(self, number=0x00, data='\x00' * 12):
+        LegacyChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_EXTENDED_ACKNOWLEDGED_DATA,
+                                payload=data, number=number)
+
+class LegacyChannelBurstDataMessage(LegacyChannelMessage):
+    def __init__(self, number=0x00, data='\x00' * 12):
+        LegacyChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_EXTENDED_BURST_DATA,
+                                payload=data, number=number)
+
+#extended data
+
+class ExtendedChannelBroadcastDataMessage(ChannelBroadcastDataMessage,ExtendedChannelMessage):
+    def __init__(self, number=0x00, data='\x00' * 10):
+        ExtendedChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_BROADCAST_DATA,
+                                payload=data, number=number)
+
+
+class ExtendedChannelAcknowledgedDataMessage(ChannelAcknowledgedDataMessage,ExtendedChannelMessage):
+    def __init__(self, number=0x00, data='\x00' * 10):
+        ExtendedChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_ACKNOWLEDGED_DATA,
+                                payload=data, number=number)
+
+
+class ExtendedChannelBurstDataMessage(ChannelBurstDataMessage,ExtendedChannelMessage):
+    def __init__(self, number=0x00, data='\x00' * 10):
+        ExtendedChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_BURST_DATA,
                                 payload=data, number=number)
 
 
@@ -509,3 +890,82 @@ class SerialNumberMessage(Message):
                                '(expected 4 bytes).')
 
         self.setPayload(serial)
+
+
+# notification messages 
+
+class StartupMessage(Message):
+    def __init__(self):
+        Message.__init__(self, type_=MESSAGE_STARTUP, payload = '\x00'  )
+
+    def isPowerOnReset(self):
+        if ord(self.getPayload()[0]) == 0x00:
+            return True
+        return False
+
+    def isHardwareLineReset(self):
+        if ord(self.getPayload()[0]) & (1 << 0) != 0:
+            return True
+        return False    
+
+    def isWatchDogReset(self):
+        if ord(self.getPayload()[0]) & (1 << 1) != 0:
+            return True
+        return False
+
+    def isCommandReset(self):
+        if ord(self.getPayload()[0]) & (1 << 5) != 0:
+            return True
+        return False
+
+    def isSynchronousReset(self):
+        if ord(self.getPayload()[0]) & (1 << 6) != 0:
+            return True
+        return False
+
+    def isSuspendReset(self):
+        if ord(self.getPayload()[0]) & (1 << 7) != 0:
+            return True
+        return False        
+
+# utilities for burst messages
+
+class BurstSequence(object):
+
+    INIT_VAL = 0b00
+    MAX_VAL = 0b011
+    WRAP_VAL = 0b001
+    FINISH_VAL = 0b110
+    MAX_CHANNEL = 0b11111
+
+    
+    def __init__(self):
+        self.current_val = BurstSequence.INIT_VAL    
+    
+    def next(self):
+        rtn = self.current_val
+        if self.current_val == BurstSequence.MAX_VAL:
+            self.current_val = BurstSequence.INIT_VAL
+        elif self.current_val > BurstSequence.FINISH_VAL:
+            raise ValueError('Value out of bounds. Who has been messing with my internals?')
+        elif self.current_val == BurstSequence.FINISH_VAL:
+            pass
+        else:
+            self.current_val += 1
+        return rtn
+    
+    def finish(self):
+        self.current_val = BurstSequence.FINISH_VAL
+    
+    def reset(self):
+        self.current_val = INIT_VAL
+
+    def combine(self,channel_no):
+        if channel_no > BurstSequence.MAX_CHANNEL:
+            raise ValueError('Channel number limited to 5 bits (value too large)')
+        elif channel_no < 0:
+            raise ValueError('Channel number cannot be subzero (value too small)')    
+        return channel_no | (self.next() << 5)
+
+
+    

@@ -11,10 +11,13 @@ from ant.core import node
 from config import *
 
 # Initialize and configure our ANT stick's driver
-stick = driver.USB1Driver(SERIAL, log=LOG, debug=DEBUG)
+stick = driver.USB2Driver('test')
+
+
 
 # Now create an ANT node, and pass it our driver so it can talk to the stick
 antnode = node.Node(stick)
+
 
 # Open driver if closed, start event listener, reset internal settings, and
 # send a system reset command to the ANT stick (blocks).
@@ -23,6 +26,7 @@ try:
 except driver.DriverError, e:
     print e
     sys.exit()
+
 
 # At any point in our node's life, we could manually call reset() to re-
 # initialize the stick and Node. Like this:

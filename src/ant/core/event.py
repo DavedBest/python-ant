@@ -41,18 +41,42 @@ from ant.core.exceptions import MessageError
 
 def ProcessBuffer(buffer_):
     messages = []
+    
+    #print 'buffer'
 
     while True:
+        if len(buffer_) == 0:
+            break
         hf = Message()
         try:
             msg = hf.getHandler(buffer_)
             buffer_ = buffer_[len(msg.getPayload()) + 4:]
             messages.append(msg)
         except MessageError, e:
-            if e.internal == "CHECKSUM":
-                buffer_ = buffer_[ord(buffer_[1]) + 4:]
-            else:
-                break
+            print e
+            #if e.internal == "CHECKSUM":
+            #try:
+            #    msg_length = ord(buffer_[1])
+                #extended msgs are upto 23 bytes ?
+            #    if msg_length > 0 and msg_length <= MAX_MESSAGE_LENGTH:
+            #        buffer_ = buffer_[msg_length + 4:]
+            #except:
+            # try and find next message by locating sync byte -msg length corrupted?
+            next_message_start = len(buffer_)
+            count = 0
+            for index,byte in enumerate(buffer_):
+                byte_value = ord(byte)
+                if byte_value == MESSAGE_TX_SYNC or byte_value == MESSAGE_TX_SYNC_LSB:
+                    count += 1
+                    # look for next sync byte
+                    if count > 1:
+                        next_message_start = index
+                        break                    
+                
+            buffer_ = buffer_[next_message_start:]
+            #else:
+            #print len(buffer_)
+            #    break
 
     return (buffer_, messages,)
 
@@ -61,7 +85,6 @@ def EventPump(evm):
     evm.pump_lock.acquire()
     evm.pump = True
     evm.pump_lock.release()
-
     go = True
     buffer_ = ''
     while go:
@@ -77,10 +100,12 @@ def EventPump(evm):
 
         evm.callbacks_lock.acquire()
         for message in messages:
+            #print message
             for callback in evm.callbacks:
                 try:
                     callback.process(message)
                 except Exception, e:
+                    print e
                     pass
 
         evm.callbacks_lock.release()
