@@ -37,12 +37,15 @@ import time
 from ant.core.constants import *
 from ant.core.message import Message, ChannelEventMessage
 from ant.core.exceptions import MessageError
+import struct
 
 
 def ProcessBuffer(buffer_):
     messages = []
     
     #print 'buffer'
+
+    #print buffer_
 
     while True:
         if len(buffer_) == 0:
@@ -51,6 +54,7 @@ def ProcessBuffer(buffer_):
         try:
             msg = hf.getHandler(buffer_)
             buffer_ = buffer_[len(msg.getPayload()) + 4:]
+            #print msg
             messages.append(msg)
         except MessageError, e:
             print e
@@ -74,6 +78,9 @@ def ProcessBuffer(buffer_):
                         break                    
                 
             buffer_ = buffer_[next_message_start:]
+
+            #data = struct.unpack('B' * len(buffer_), buffer_)
+            #print data
             #else:
             #print len(buffer_)
             #    break

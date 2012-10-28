@@ -148,8 +148,9 @@ class Channel(event.EventCallback):
                 raise ChannelError('Methods requires a burst stream (use send)')            
             channel_no = self.getNumber()
             if i == last_index:
-                seq.finish()           
-            msg.setChannelNumber(seq.combine(channel_no))
+                seq.finish()
+            msg.setChannelNumber(channel_no)          
+            msg.setSequenceCode(seq.next())
             self.node.send(msg)        
 
     def process(self, msg):

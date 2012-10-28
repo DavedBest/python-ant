@@ -692,6 +692,38 @@ class RequestMessage(ChannelRequestMessage):
     pass
 
 
+class BurstChannelMixin(object):
+    
+    CHANNEL_MASK = 0b11111
+    SEQUENCE_MASK = 0b111 << 5
+
+    def getChannelNumber(self):
+        payload = self.getPayloadAsList()
+        return ord(payload[0]) & BurstChannelMixin.CHANNEL_MASK
+
+    def setChannelNumber(self, number):
+        if (number > BurstChannelMixin.CHANNEL_MASK) or (number < 0x00):
+            raise MessageError('Could not set channel number ' \
+                                   '(out of range).')
+        payload = self.getPayloadAsList()
+        burstSequence = ord(payload[0]) & BurstChannelMixin.SEQUENCE_MASK
+        payload[0] = chr(number | burstSequence << 5)
+        self.setPayload(payload)
+    
+    def getSequenceCode(self):
+        payload = self.getPayloadAsList()
+        return ord(payload[0]) & BurstChannelMixin.SEQUENCE_MASK
+    
+    def setSequenceCode(self, code):
+        if (code > 0b111) or (code < 0x00):
+            raise MessageError('Could not set sequence code ' \
+                                   '(out of range).')
+        payload = self.getPayloadAsList()        
+        number = ord(payload[0]) & BurstChannelMixin.CHANNEL_MASK
+        payload[0] = chr(number | code << 5)
+        self.setPayload(payload)
+        
+
 # Data messages
 class ChannelBroadcastDataMessage(ChannelMessage):
     def __init__(self, number=0x00, data='\x00' * 8):
@@ -705,7 +737,7 @@ class ChannelAcknowledgedDataMessage(ChannelMessage):
                                 payload=data, number=number)
 
 
-class ChannelBurstDataMessage(ChannelMessage):
+class ChannelBurstDataMessage(BurstChannelMixin,ChannelMessage):
     def __init__(self, number=0x00, data='\x00' * 8):
         ChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_BURST_DATA,
                                 payload=data, number=number)
@@ -722,7 +754,7 @@ class LegacyChannelAcknowledgedDataMessage(LegacyChannelMessage):
         LegacyChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_EXTENDED_ACKNOWLEDGED_DATA,
                                 payload=data, number=number)
 
-class LegacyChannelBurstDataMessage(LegacyChannelMessage):
+class LegacyChannelBurstDataMessage(BurstChannelMixin,LegacyChannelMessage):
     def __init__(self, number=0x00, data='\x00' * 12):
         LegacyChannelMessage.__init__(self, type_=MESSAGE_CHANNEL_EXTENDED_BURST_DATA,
                                 payload=data, number=number)
