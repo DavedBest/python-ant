@@ -33,9 +33,10 @@ from __future__ import division, absolute_import, print_function, unicode_litera
 from time import sleep, time
 from threading import Lock, Thread
 
-from ant.core.constants import MESSAGE_TX_SYNC, RESPONSE_NO_ERROR
+from ant.core.constants import MESSAGE_TX_SYNC, MESSAGE_TX_SYNC_LSB, RESPONSE_NO_ERROR
 from ant.core.message import Message, ChannelEventResponseMessage
 from ant.core.exceptions import MessageError
+
 from usb.core import USBError
 
 
@@ -64,7 +65,8 @@ def EventPump(evm):
                 if err.internal is not Message.INCOMPLETE:
                     i, length = 1, len(buffer_)
                     # move to the next SYNC byte
-                    while i < length and ord(buffer_[i]) != MESSAGE_TX_SYNC:
+                    while i < length and ord(buffer_[i]) not in \
+                            (MESSAGE_TX_SYNC, MESSAGE_TX_SYNC_LSB):
                         i += 1
                     buffer_ = buffer_[i:]
                 else:

@@ -165,6 +165,31 @@ class Channel(event.EventCallback):
         with self.evmCallbackLock:
             self.callbacks.add(callback)
     
+    def send(self, msg):
+        if not isinstance(msg, message.ChannelMessage):
+            raise ChannelError('Could not send message (non ChannelMessage)')
+        if isinstance(msg, (message.ChannelBurstDataMessage,
+                            message.LegacyChannelBurstDataMessage)):
+            raise ChannelError('Wrong method for burst data streams (use sendBurst)')
+        # force msg to be sent over this channel
+        msg.channelNumber = self.number
+        self.node.evm.writeMessage(msg)
+
+    def sendBurst(self, msg_list):
+        seq = message.BurstSequence()
+        last_index = len(msg_list) -1
+        for i,msg in enumerate(msg_list):
+            if not isinstance(msg,message.ChannelMessage):
+                raise ChannelError('Could not send message (non ChannelMessage)')
+            if not isinstance(msg, (message.ChannelBurstDataMessage,
+                                    message.LegacyChannelBurstDataMessage)):
+                raise ChannelError('Methods requires a burst stream (use send)')
+            if i == last_index:
+                seq.finish()
+            msg.channelNumber = self.number
+            msg.setSequenceCode(seq.next())
+            self.node.send(msg)
+
     def process(self, msg):
         with self.evmCallbackLock:
             if isinstance(msg, ChannelMessage) and msg.channelNumber == self.number:

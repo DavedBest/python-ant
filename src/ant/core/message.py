@@ -22,7 +22,7 @@
 # IN THE SOFTWARE.
 #
 ##############################################################################
-# pylint: disable=missing-docstring,invalid-name
+# pylint: disable=missing-docstring,invalid-name,too-many-ancestors
 
 from __future__ import division, absolute_import, print_function, unicode_literals
 
@@ -71,24 +71,36 @@ MSG_FOOTER_SIZE = 1
 class Message(with_metaclass(MessageType)):
     TYPES = {}
     type = None
+    PAYLOAD_SIZE = 9
     
     INCOMPLETE = 'incomplete'
     CORRUPTED = 'corrupted'
     MALFORMED = 'malformed'
     
-    def __init__(self, payload=None):
+    def __init__(self, payload=None, sync=MESSAGE_TX_SYNC):
         self._payload = None
         self.payload = payload if payload is not None else bytearray()
+        self._sync = sync
     
     @property
     def payload(self):
         return self._payload
     @payload.setter
     def payload(self, payload):
-        if len(payload) > 9:
+        if len(payload) > self.PAYLOAD_SIZE:
             raise MessageError('Could not set payload (payload too long).',
                                internal=Message.MALFORMED)
         self._payload = payload
+    
+    @property
+    def sync(self):
+        return self._sync
+    @sync.setter
+    def sync(self, sync):
+        if sync not in (constants.MESSAGE_TX_SYNC, constants.MESSAGE_TX_SYNC_LSB):
+            raise MessageError('Could not decode (expected TX sync).',
+                               internal=Message.CORRUPTED)
+        self.sync = sync
     
     @property
     def checksum(self):
@@ -113,14 +125,17 @@ class Message(with_metaclass(MessageType)):
         
         sync, length, type_ = raw[:MSG_HEADER_SIZE]
         
-        if sync != MESSAGE_TX_SYNC:
-            raise MessageError('Could not decode (expected TX sync).',
-                               internal=Message.CORRUPTED)
         if len(raw) < (length + MSG_HEADER_SIZE + MSG_FOOTER_SIZE):
             raise MessageError('Could not decode (message is incomplete).',
                                internal=Message.INCOMPLETE)
-            
-        msg = Message(type=type_)  # pylint: disable=unexpected-keyword-arg
+        
+        if length == Message.PAYLOAD_SIZE:
+            cls = Message
+        elif length == LegacyExtendedMessage.PAYLOAD_SIZE:
+            cls = LegacyExtendedMessage
+        else:
+            cls = FlaggedExtendedMessage
+        msg = cls(type=type_, sync=sync)
         msg.payload = raw[MSG_HEADER_SIZE:length + MSG_HEADER_SIZE]
         
         if msg.checksum != raw[length + MSG_HEADER_SIZE]:
@@ -139,9 +154,170 @@ class Message(with_metaclass(MessageType)):
         return rawstr + '>'
 
 
+class ChannelData(object):
+    channelDataOffset = 0
+    _payload = None
+    SIZE = 4
+    
+    @property
+    def deviceNumber(self):
+        offset = self.channelDataOffset
+        return unpack(b'<H', bytes(self._payload[offset:offset+2]))[0]
+    @deviceNumber.setter
+    def deviceNumber(self, deviceNumber):
+        offset = self.channelDataOffset
+        self._payload[offset:offset+2] = pack(b'<H', deviceNumber)
+    
+    @property
+    def deviceType(self):
+        return self._payload[self.channelDataOffset+2]
+    @deviceType.setter
+    def deviceType(self, deviceType):
+        self._payload[self.channelDataOffset+2] = deviceType
+    
+    @property
+    def transmissionType(self):
+        return self._payload[self.channelDataOffset+3]
+    @transmissionType.setter
+    def transmissionType(self, transmissionType):
+        self._payload[self.channelDataOffset+3] = transmissionType
+
+
+class FlaggedExtendedMessage(Message, ChannelData):
+    channelDataOffset = 10
+    
+    ENABLE_CHANNEL_ID = 0x80
+    ENABLE_RSSI_OUTPUT = 0x40
+    ENABLE_RX_TIMESTAMP = 0x20
+    
+    def __init__(self, flag=0x00, payload='\x00'*11, sync=MESSAGE_TX_SYNC):
+        super(FlaggedExtendedMessage, self).__init__(payload=payload, sync=sync)
+        self.rssiType = None
+        self.rssiValue = None
+        self.rssiThreshold = None
+        
+        self.timestamp = None
+        
+        self.isEnabledChannelID = False
+        self.isEnabledRSSIOutput = False
+        self.isEnabledRXTimestamp = False
+        
+        self.decodeFlag(flag)
+
+    def decodeFlag(self, flag):
+        self.isEnabledChannelID = (flag & FlaggedExtendedMessage.ENABLE_CHANNEL_ID) == \
+                                   FlaggedExtendedMessage.ENABLE_CHANNEL_ID
+        self.isEnabledRSSIOutput = (flag & FlaggedExtendedMessage.ENABLE_RSSI_OUTPUT) == \
+                                    FlaggedExtendedMessage.ENABLE_RSSI_OUTPUT
+        self.isEnabledRXTimestamp = (flag & FlaggedExtendedMessage.ENABLE_RX_TIMESTAMP) \
+                                  == FlaggedExtendedMessage.ENABLE_RX_TIMESTAMP
+    
+    def encodeFlag(self, isEnabledChannelID=False, isEnabledRSSIOutput=False,
+                   isEnabledRXTimestamp=False):
+        flag = 0x00
+        if isEnabledChannelID:
+            flag |= FlaggedExtendedMessage.ENABLE_CHANNEL_ID
+        if isEnabledRSSIOutput:
+            flag |= FlaggedExtendedMessage.ENABLE_RSSI_OUTPUT
+        if isEnabledRXTimestamp:
+            flag |= FlaggedExtendedMessage.ENABLE_RX_TIMESTAMP
+        self.flag = flag
+        return flag
+    
+    @payload.setter
+    def payload(self, payload):  # pylint: disable=arguments-differ
+        if len(payload) < 10:
+            raise MessageError('Too few bytes for an extended message (too few bytes)')
+        
+        self.decodeFlag(payload[9])
+        
+        offset = FlaggedExtendedMessage.channelDataOffset
+        if self.isEnabledChannelID:
+            self.isEnabledChannelID = offset
+            offset += ChannelData.SIZE
+        if self.isEnabledRSSIOutput:
+            self.isEnabledRSSIOutput = offset
+            offset += 3
+        if self.isEnabledRXTimestamp:
+            self.isEnabledRXTimestamp = offset
+            offset += 2
+        self.PAYLOAD_SIZE = offset
+        
+        super(FlaggedExtendedMessage, self).paylod = payload
+
+    
+    @property
+    def flag(self):
+        return self._payload[9]
+    @flag.setter
+    def flag(self, flag):
+        if not ~FlaggedExtendedMessage.ENABLE_CHANNEL_ID & \
+               ~FlaggedExtendedMessage.ENABLE_RSSI_OUTPUT & \
+               ~FlaggedExtendedMessage.ENABLE_RX_TIMESTAMP & \
+               flag:
+            raise MessageError("wrong flag")
+        self.decodeFlag(flag)
+        self._payload[9] = flag
+    
+    def _getEnableRSSIOutput(self, offset):
+        enableRSSIOutput = self.isEnabledRSSIOutput
+        if enableRSSIOutput is False:
+            raise MessageError("data not available")
+        return self._payload[enableRSSIOutput + offset]
+    def _setEnableRSSIOutput(self, data, offset):
+        enableRSSIOutput = self.isEnabledRSSIOutput
+        if enableRSSIOutput is False:
+            raise MessageError("data not available")
+        self._payload[enableRSSIOutput + offset] = data
+    
+    @property
+    def rssiType(self):
+        return self._getEnableRSSIOutput(0)
+    @rssiType.setter
+    def rssiType(self, rssiType):
+        self._setEnableRSSIOutput(rssiType, 0)
+    
+    @property
+    def rssiValue(self):
+        return self._getEnableRSSIOutput(1)
+    @rssiValue.setter
+    def rssiValue(self, rssiValue):
+        return self._setEnableRSSIOutput(rssiValue, 1)
+    
+    @property
+    def rssiThreshold(self):
+        return self._getEnableRSSIOutput(2)
+    @rssiThreshold.setter
+    def rssiThreshold(self, rssiThreshold):
+        return self._setEnableRSSIOutput(rssiThreshold, 2)
+    
+    @property
+    def rxTimestamp(self):
+        enableRXTimestamp = self.isEnabledRSSIOutput
+        if enableRXTimestamp is False:
+            raise MessageError("rssiType not available")
+        return self._payload[enableRXTimestamp + 2]
+    @rxTimestamp.setter
+    def rxTimestamp(self, rxTimestamp):
+        enableRXTimestamp = self.isEnabledRXTimestamp
+        if enableRXTimestamp is False:
+            raise MessageError("rssiType not available")
+        self._payload[enableRXTimestamp] = rxTimestamp
+
+
+class LegacyExtendedMessage(Message, ChannelData):
+    channelDataOffset = 5
+    PAYLOAD_SIZE = 13
+    
+    def __init__(self, payload=bytearray(LegacyExtendedMessage.PAYLOAD_SIZE),
+                 sync=MESSAGE_TX_SYNC):
+        super(LegacyExtendedMessage, self).__init__(payload=payload, sync=sync)
+
+
+
 class ChannelMessage(Message):
-    def __init__(self, payload=b'', number=0x00):
-        super(ChannelMessage, self).__init__(bytearray(1) + payload)
+    def __init__(self, payload=b'', number=0x00, *args, **kwargs):
+        super(ChannelMessage, self).__init__(bytearray(1) + payload, *args, **kwargs)
         self.channelNumber = number
     
     @property
@@ -162,6 +338,26 @@ class ChannelMessage(Message):
 
 
 # Config messages
+
+class ChannelLibConfigMessage(Message):
+    type = constants.MESSAGE_LIB_CONFIG
+    
+    def __init__(self, mask=FlaggedExtendedMessage.ENABLE_RX_TIMESTAMP | \
+                            FlaggedExtendedMessage.ENABLE_CHANNEL_ID):
+        # usb2 stick doesn't support rssi | ExtendedMessageFlags.ENABLE_RSSI_OUTPUT 
+        # filler byte required
+        payload = pack('BB', 0, mask)
+        super(ChannelLibConfigMessage, self).__init__(payload)
+
+
+class ChannelEnableExtendedMessage(Message):
+    type = constants.MESSAGE_ENABLE_EXTENDED_MESSAGES
+    
+    def __init__(self, enable=True):
+        payload = pack('BB', 0, 1 if enable else 0)
+        super(ChannelEnableExtendedMessage, self).__init__(payload)
+
+
 class ChannelUnassignMessage(ChannelMessage):
     type = constants.MESSAGE_CHANNEL_UNASSIGN
     
@@ -192,36 +388,16 @@ class ChannelAssignMessage(ChannelMessage):
         self._payload[2] = number
 
 
-class ChannelIDMessage(ChannelMessage):
+class ChannelIDMessage(ChannelMessage, ChannelData):
+    _offset = 1
     type = constants.MESSAGE_CHANNEL_ID
     
-    def __init__(self, number=0x00, device_number=0x0000, device_type=0x00,
-                 trans_type=0x00):
-        super(ChannelIDMessage, self).__init__(payload=bytearray(4), number=number)
-        self.deviceNumber = device_number
-        self.deviceType = device_type
-        self.transmissionType = trans_type
-    
-    @property
-    def deviceNumber(self):
-        return unpack(b'<H', bytes(self._payload[1:3]))[0]
-    @deviceNumber.setter
-    def deviceNumber(self, device_number):
-        self._payload[1:3] = pack(b'<H', device_number)
-    
-    @property
-    def deviceType(self):
-        return self._payload[3]
-    @deviceType.setter
-    def deviceType(self, device_type):
-        self._payload[3] = device_type
-    
-    @property
-    def transmissionType(self):
-        return self._payload[4]
-    @transmissionType.setter
-    def transmissionType(self, trans_type):
-        self._payload[4] = trans_type
+    def __init__(self, number=0x00,
+                 deviceNumber=0x0000, deviceType=0x00, transmissionType=0x00):
+        super(ChannelIDMessage, self).__init__(payload=bytearray(4), number=number,
+                                               deviceNumber=deviceNumber,
+                                               deviceType=deviceType,
+                                               transmissionType=transmissionType)
 
 
 class ChannelPeriodMessage(ChannelMessage):
@@ -338,6 +514,13 @@ class ChannelOpenMessage(ChannelMessage):
         super(ChannelOpenMessage, self).__init__(number=number)
 
 
+class ChannelOpenRxScanMessage(ChannelMessage):
+    type = constants.MESSAGE_OPEN_RX_SCAN
+    
+    def __init__(self, number=0x00):
+        super(ChannelOpenRxScanMessage, self).__init__(number=number)
+
+
 class ChannelCloseMessage(ChannelMessage):
     type = constants.MESSAGE_CHANNEL_CLOSE
     
@@ -363,26 +546,87 @@ class ChannelRequestMessage(ChannelMessage):
         self._payload[1] = messageID
 
 
+class BurstChannelMixin(object):
+    CHANNEL_MASK = 0b11111
+    SEQUENCE_MASK = 0b111 << 5
+    payload = None  # for linting
+    
+    @property
+    def channelNumber(self):
+        return self.payload[0] & BurstChannelMixin.CHANNEL_MASK
+    @channelNumber.setter
+    def channelNumber(self, number):
+        if (number > BurstChannelMixin.CHANNEL_MASK) or (number < 0x00):
+            raise MessageError('Could not set channel number ' \
+                                   '(out of range).')
+        payload = self.payload
+        burstSequence = ord(payload[0]) & BurstChannelMixin.SEQUENCE_MASK
+        payload[0] = chr(number | burstSequence << 5)
+        self.payload = payload
+    
+    @property
+    def sequenceCode(self):
+        payload = self.payload
+        return ord(payload[0]) & BurstChannelMixin.SEQUENCE_MASK
+    @sequenceCode.setter
+    def sequenceCode(self, code):
+        if (code > 0b111) or (code < 0x00):
+            raise MessageError('Could not set sequence code ' \
+                                   '(out of range).')
+        payload = self.payload
+        number = ord(payload[0]) & BurstChannelMixin.CHANNEL_MASK
+        payload[0] = chr(number | code << 5)
+        self.payload = payload
+
+
 # Data messages
-class ChannelBroadcastDataMessage(ChannelMessage):
+
+class ChannelDataMessage(ChannelMessage):
+    def __init__(self, number=0x00, data=b'\x00' * 8):
+        super(ChannelDataMessage, self).__init__(payload=data, number=number)
+
+class ChannelBroadcastDataMessage(ChannelDataMessage):
     type = constants.MESSAGE_CHANNEL_BROADCAST_DATA
-    
-    def __init__(self, number=0x00, data=b'\x00' * 7):
-        super(ChannelBroadcastDataMessage, self).__init__(payload=data, number=number)
 
-
-class ChannelAcknowledgedDataMessage(ChannelMessage):
+class ChannelAcknowledgedDataMessage(ChannelDataMessage):
     type = constants.MESSAGE_CHANNEL_ACKNOWLEDGED_DATA
-    
-    def __init__(self, number=0x00, data=b'\x00' * 7):
-        super(ChannelAcknowledgedDataMessage, self).__init__(payload=data, number=number)
 
-
-class ChannelBurstDataMessage(ChannelMessage):
+class ChannelBurstDataMessage(ChannelDataMessage):
     type = constants.MESSAGE_CHANNEL_BURST_DATA
-    
-    def __init__(self, number=0x00, data=b'\x00' * 7):
-        super(ChannelBurstDataMessage, self).__init__(payload=data, number=number)
+
+
+#legacy extended data
+
+class LegacyChannelMessage(ChannelMessage, LegacyExtendedMessage):
+    def __init__(self, number=0x00, data=b'\x00' * 12):
+        super(LegacyChannelMessage, self).__init__(payload=data, number=number)
+
+class LegacyChannelBroadcastDataMessage(LegacyChannelMessage):
+    type = constants.MESSAGE_CHANNEL_EXTENDED_BROADCAST_DATA
+
+class LegacyChannelAcknowledgedDataMessage(LegacyChannelMessage):
+    type = constants.MESSAGE_CHANNEL_EXTENDED_ACKNOWLEDGED_DATA
+
+class LegacyChannelBurstDataMessage(BurstChannelMixin, LegacyChannelMessage):
+    type = constants.MESSAGE_CHANNEL_EXTENDED_BURST_DATA
+
+
+#extended data
+
+class ExtendedChannelMessage(ChannelMessage, FlaggedExtendedMessage):
+    def __init__(self, number=0x00, data=b'\x00' * 10):
+        super(ExtendedChannelMessage, self).__init__(payload=data, number=number)
+
+class ExtendedChannelBroadcastDataMessage(ChannelBroadcastDataMessage,
+                                          ExtendedChannelMessage):
+    type = constants.MESSAGE_CHANNEL_BROADCAST_DATA
+
+class ExtendedChannelAcknowledgedDataMessage(ChannelAcknowledgedDataMessage,
+                                             ExtendedChannelMessage):
+    type = constants.MESSAGE_CHANNEL_ACKNOWLEDGED_DATA
+
+class ExtendedChannelBurstDataMessage(ChannelBurstDataMessage, ExtendedChannelMessage):
+    type = constants.MESSAGE_CHANNEL_BURST_DATA
 
 
 # Channel event messages
@@ -477,6 +721,27 @@ class StartupMessage(Message):
         if (startupMessage > 0xFF) or (startupMessage < 0x00):
             raise MessageError('Could not set start-up message (out of range).')
         self._payload[0] = startupMessage
+    
+    def isPowerOnReset(self):
+        return self.startupMessage == 0x00
+    
+    def _hasFlag(self, pad):
+        return self.startupMessage & (1 << pad) != 0
+    
+    def isHardwareLineReset(self):
+        return self._hasFlag(0)
+    
+    def isWatchDogReset(self):
+        return self._hasFlag(1)
+    
+    def isCommandReset(self):
+        return self._hasFlag(5)
+    
+    def isSynchronousReset(self):
+        return self._hasFlag(6)
+    
+    def isSuspendReset(self):
+        return self._hasFlag(7)
 
 
 class CapabilitiesMessage(Message):
@@ -556,3 +821,43 @@ class SerialNumberMessage(Message):
             raise MessageError('Could not set serial number (expected 4 bytes).')
         
         self.payload = bytearray(serial)
+
+
+# utilities for burst messages
+
+class BurstSequence(object):
+    
+    INIT_VAL    = 0b00
+    MAX_VAL     = 0b011
+    WRAP_VAL    = 0b001
+    FINISH_VAL  = 0b110
+    MAX_CHANNEL = 0b11111
+    
+    def __init__(self):
+        self.current_val = BurstSequence.INIT_VAL
+    
+    def next(self):
+        rtn = self.current_val
+        if self.current_val == BurstSequence.MAX_VAL:
+            self.current_val = BurstSequence.INIT_VAL
+        elif self.current_val > BurstSequence.FINISH_VAL:
+            raise ValueError("Value out of bounds. "
+                             "Who has been messing with my internals?")
+        elif self.current_val == BurstSequence.FINISH_VAL:
+            pass
+        else:
+            self.current_val += 1
+        return rtn
+    
+    def finish(self):
+        self.current_val = BurstSequence.FINISH_VAL
+    
+    def reset(self):
+        self.current_val = BurstSequence.INIT_VAL
+    
+    def combine(self,channel_no):
+        if channel_no > BurstSequence.MAX_CHANNEL:
+            raise ValueError('Channel number limited to 5 bits (value too large)')
+        elif channel_no < 0:
+            raise ValueError('Channel number cannot be subzero (value too small)')
+        return channel_no | (self.next() << 5)
